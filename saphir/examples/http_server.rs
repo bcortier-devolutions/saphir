@@ -4,8 +4,10 @@ use saphir::*;
 
 struct TestMiddleware {}
 
+struct QueryParams(Vec<(String, String)>);
+
 impl Middleware for TestMiddleware {
-    fn resolve(&self, req: &mut SyncRequest, _res: &mut SyncResponse) -> RequestContinuation {
+    fn resolve(&self, req: &mut Request<Vec<u8>>, _res: &mut ResponseBuilder) -> RequestContinuation {
         println!("I'm a middleware");
         println!("{:?}", req);
 
@@ -15,7 +17,7 @@ impl Middleware for TestMiddleware {
             vec![]
         };
 
-        req.addons_mut().add(RequestAddon::new("query_params".to_owned(), params));
+        req.extensions_mut().insert(QueryParams(params));
 
         RequestContinuation::Continue
     }
@@ -32,7 +34,7 @@ impl TestControllerContext {
         }
     }
 
-    pub fn function_to_receive_any_get_http_call(&self, _req: &SyncRequest, res: &mut SyncResponse) {
+    pub fn function_to_receive_any_get_http_call(&self, _req: &Request<Vec<u8>>, res: &mut ResponseBuilder) {
         res.status(StatusCode::OK).body(format!("this is working nicely!\r\n the context string is : {}", self.resource));
     }
 }
@@ -56,11 +58,9 @@ fn main() {
             basic_test_cont.add(Method::GET, reg!("^/timeout"), |_, _, _| { std::thread::sleep(std::time::Duration::from_millis(15000)) });
 
             basic_test_cont.add(Method::GET, reg!("^/query"), |_, req, _| {
-                if let Some(query_params) = req.addons().get("query_params") {
-                    if let Some(vec_param) = query_params.borrow_as::<Vec<(String, String)>>() {
-                        for param in vec_param {
-                            println!("{:?}", param);
-                        }
+                if let Some(query_params) = req.extensions().get::<QueryParams>() {
+                    for param in &query_params.0 {
+                        println!("{:?}", param);
                     }
                 }
             });

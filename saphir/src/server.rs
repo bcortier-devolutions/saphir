@@ -6,11 +6,14 @@ use hyper::service::service_fn;
 use log::{info, error, warn};
 use tokio::runtime::TaskExecutor;
 
-use crate::http::*;
 use crate::utils;
 use crate::error::ServerError;
 use crate::middleware::{MiddlewareStack, Builder as MidStackBuilder};
 use crate::router::{Router, Builder as RouterBuilder};
+use crate::uri::Uri;
+use crate::{Request, ResponseBuilder};
+use hyper::{Request as HttpRequest, Response as HttpResponse, body::Body};
+use crate::StatusCode;
 
 ///
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 15000;
@@ -234,7 +237,7 @@ impl Server {
             handler: service.clone(),
         };
 
-        if scheme.eq(&crate::http_types::uri::Scheme::HTTP) {
+        if scheme.eq(&crate::uri::Scheme::HTTP) {
             if let (Some(_), _) = self.listener_config.ssl_files_path() {
                 warn!("SSL certificate paths are provided but the listener was configured to use unsecured HTTP, try changing the uri scheme for https");
             }
@@ -248,7 +251,7 @@ impl Server {
 
             executor.spawn(server);
             info!("Saphir successfully started and listening on {}", uri);
-        } else if scheme.eq(&crate::http_types::uri::Scheme::HTTPS) {
+        } else if scheme.eq(&crate::uri::Scheme::HTTPS) {
             #[cfg(feature = "https")]
                 {
                     if let (Some(cert_path), Some(key_path)) = self.listener_config.ssl_files_path() {
@@ -305,7 +308,7 @@ impl Server {
 
         let service = self.service.clone();
 
-        if scheme.eq(&crate::http_types::uri::Scheme::HTTP) {
+        if scheme.eq(&crate::uri::Scheme::HTTP) {
             if let (Some(_), _) = self.listener_config.ssl_files_path() {
                 warn!("SSL certificate paths are provided but the listener was configured to use unsecured HTTP, try changing the uri scheme for https");
             }
@@ -319,7 +322,7 @@ impl Server {
 
             info!("Saphir successfully started and listening on {}", uri);
             ::hyper::rt::run(server);
-        } else if scheme.eq(&crate::http_types::uri::Scheme::HTTPS) {
+        } else if scheme.eq(&crate::uri::Scheme::HTTPS) {
             #[cfg(feature = "https")]
                 {
                     if let (Some(cert_path), Some(key_path)) = self.listener_config.ssl_files_path() {
@@ -374,8 +377,9 @@ pub struct HttpService {
 
 #[doc(hidden)]
 impl HttpService {
-    pub fn handle(&self, req: Request<Body>) -> Box<Future<Item=Response<Body>, Error=ServerError> + Send> {
+    pub fn handle(&self, req: HttpRequest<Body>) -> Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send> {
         use std::time::{Instant, Duration};
+        use tokio::prelude::*;
         use crate::server::utils::RequestContinuation::*;
         use futures::sync::oneshot::channel;
         use rayon;
@@ -388,20 +392,26 @@ impl HttpService {
             request_timeout
         } = self.clone();
 
-        Box::new(req.load_body().map_err(|e| ServerError::from(e)).and_then(move |mut request| {
+        let (h, b) = req.into_parts();
+
+        let request_fut = b.concat2().map(move |b| {
+            let body_vec: Vec<u8> = b.to_vec();
+            Request::from_http_request_parts(h, body_vec)
+        });
+
+        Box::new(request_fut.map_err(|e| ServerError::from(e)).and_then(move |mut request| {
             rayon::spawn(move || {
                 let req_iat = Instant::now();
-                let mut response = SyncResponse::new();
+                let mut response = ResponseBuilder::new();
 
                 if let Continue = middleware_stack.resolve(&mut request, &mut response) {
                     router.dispatch(&mut request, &mut response);
                 }
 
-                let final_res = response.build_response().unwrap_or_else(|_| {
-                    let empty: &[u8] = b"";
-                    let mut res = Response::new(empty.into());
-                    *res.status_mut() = StatusCode::from_u16(500).expect("Unable to set status code to 500, this should not happens");
-                    res
+                let final_res = response.build().unwrap_or_else(|e| {
+                    let mut res = ResponseBuilder::new();
+                    res.status(StatusCode::from_u16(500).expect("Unable to set status code to 500, this should not happens")).body(e);
+                    res.build().unwrap()
                 });
 
                 let resp_status = final_res.status();
@@ -426,13 +436,13 @@ impl HttpService {
             });
 
             let timeout = if request_timeout > 0 {
-                Box::new(tokio::timer::Timeout::new(futures::empty::<Response<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
-                    let mut resp = Response::new(Body::empty());
+                Box::new(tokio::timer::Timeout::new(futures::empty::<HttpResponse<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
+                    let mut resp = HttpResponse::new(Body::empty());
                     *resp.status_mut() = StatusCode::REQUEST_TIMEOUT;
-                    futures::future::ok::<Response<Body>, ServerError>(resp)
-                })) as Box<Future<Item=Response<Body>, Error=ServerError> + Send>
+                    futures::future::ok::<HttpResponse<Body>, ServerError>(resp)
+                })) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
             } else {
-                Box::new(futures::empty::<Response<Body>, ServerError>()) as Box<Future<Item=Response<Body>, Error=ServerError> + Send>
+                Box::new(futures::empty::<HttpResponse<Body>, ServerError>()) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
             };
 
             rx.map_err(|e| ServerError::from(e))

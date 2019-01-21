@@ -1,7 +1,7 @@
 use regex::Regex;
 use std::sync::Arc;
 
-use crate::http::*;
+use crate::{Request, ResponseBuilder};
 use crate::utils::ToRegex;
 use crate::utils::RequestContinuation;
 use crate::utils::RequestContinuation::*;
@@ -56,7 +56,7 @@ impl MiddlewareStack {
     }
 
     ///
-    pub fn resolve(&self, req: &mut SyncRequest, res: &mut SyncResponse) -> RequestContinuation {
+    pub fn resolve(&self, req: &mut Request<Vec<u8>>, res: &mut ResponseBuilder) -> RequestContinuation {
         let path = req.uri().path().to_owned();
 
         for &(ref rule, ref middleware) in self.middlewares.iter() {
@@ -84,7 +84,7 @@ pub trait Middleware: Send + Sync {
     /// This method will be invoked if the request is targeting an included path, (as defined when "applying" the middleware to the stack)
     /// and doesn't match any exclusion. Returning `RequestContinuation::Continue` will allow the request to continue through the stack, and
     /// returning `RequestContinuation::Stop` will cease the request processing, returning as response the modified `res` param.
-    fn resolve(&self, req: &mut SyncRequest, res: &mut SyncResponse) -> RequestContinuation;
+    fn resolve(&self, req: &mut Request<Vec<u8>>, res: &mut ResponseBuilder) -> RequestContinuation;
 }
 
 struct MiddlewareRule {

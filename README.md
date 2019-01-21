@@ -20,7 +20,7 @@ use saphir::*;
 struct TestMiddleware {}
 
 impl Middleware for TestMiddleware {
-    fn resolve(&self, req: &mut SyncRequest, _res: &mut SyncResponse) -> RequestContinuation {
+    fn resolve(&self, req: &mut Request<Vec<u8>>, _res: &mut ResponseBuilder) -> RequestContinuation {
         println!("I'm a middleware");
         println!("{:?}", req);
 
@@ -47,7 +47,7 @@ impl TestControllerContext {
         }
     }
 
-    pub fn function_to_receive_any_get_http_call(&self, _req: &SyncRequest, res: &mut SyncResponse) {
+    pub fn function_to_receive_any_get_http_call(&self, _req: &Request<Vec<u8>>, res: &mut ResponseBuilder) {
         res.status(StatusCode::OK).body(format!("this is working nicely!\r\n the context string is : {}", self.resource));
     }
 }

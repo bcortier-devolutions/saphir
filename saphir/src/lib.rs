@@ -10,10 +10,9 @@
 //! Saphir provide what's needed to easily start with your own server with middleware, controllers and request routing.
 //!
 //! Futures version will comes with more macro and a nightly experiment is currently being tested to reproduces decorator in rust.
-
 #[macro_use]
 mod utils;
-mod http;
+//mod http;
 /// Modules for the error handling into saphir
 pub mod error;
 /// Modules for the middlewares
@@ -24,13 +23,15 @@ pub mod controller;
 pub mod router;
 /// Modules for the http server
 pub mod server;
+/// Module for the Request
+pub mod request;
+/// Module for the Response
+pub mod response;
 
-use ::http as http_types;
-pub use regex;
-pub use hyper;
-
+pub use http::{uri, header, StatusCode, Version, Method, Extensions};
 pub use crate::utils::*;
-pub use crate::http::*;
+pub use crate::request::*;
+pub use crate::response::*;
 pub use crate::utils::RequestContinuation;
 pub use crate::middleware::Middleware;
 pub use crate::middleware::MiddlewareStack;
