@@ -5,15 +5,15 @@ use futures::sync::oneshot::{Sender, channel};
 use hyper::service::service_fn;
 use log::{info, error, warn};
 use tokio::runtime::TaskExecutor;
-
-use crate::utils;
 use crate::error::ServerError;
-use crate::middleware::{MiddlewareStack, Builder as MidStackBuilder};
+use crate::middleware::{MiddlewareCollection, MiddlewareCollectionBuilder as MidStackBuilder};
 use crate::router::{Router, Builder as RouterBuilder};
 use crate::uri::Uri;
-use crate::{Request, ResponseBuilder};
+use crate::{BinaryRequest, ResponseBuilder};
 use hyper::{Request as HttpRequest, Response as HttpResponse, body::Body};
 use crate::StatusCode;
+use crate::request::Request;
+use crate::middleware::Continuation;
 
 ///
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 15000;
@@ -141,7 +141,7 @@ impl ServerSpawn {
 
 /// Builder for the Server type
 pub struct Builder {
-    middleware_stack: Option<MiddlewareStack>,
+    middleware_stack: Option<MiddlewareCollection>,
     router: Option<Router>,
     listener_config: Option<ListenerConfig>,
 }
@@ -190,7 +190,7 @@ impl Builder {
         Server {
             service: HttpService {
                 router: router.unwrap_or_else(|| Router::new()),
-                middleware_stack: middleware_stack.unwrap_or_else(|| MiddlewareStack::new()),
+                middleware_stack: middleware_stack.unwrap_or_else(|| MiddlewareCollection::new()),
                 request_timeout: listener_config.request_timeout_ms
             },
             listener_config
@@ -371,7 +371,7 @@ impl Server {
 #[derive(Clone)]
 pub struct HttpService {
     router: Router,
-    middleware_stack: MiddlewareStack,
+    middleware_stack: MiddlewareCollection,
     request_timeout: u64,
 }
 
@@ -380,7 +380,6 @@ impl HttpService {
     pub fn handle(&self, req: HttpRequest<Body>) -> Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send> {
         use std::time::{Instant, Duration};
         use tokio::prelude::*;
-        use crate::server::utils::RequestContinuation::*;
         use futures::sync::oneshot::channel;
         use rayon;
 
@@ -392,64 +391,77 @@ impl HttpService {
             request_timeout
         } = self.clone();
 
-        let (h, b) = req.into_parts();
+        let request = Request::from_http_request(req);
 
-        let request_fut = b.concat2().map(move |b| {
-            let body_vec: Vec<u8> = b.to_vec();
-            Request::from_http_request_parts(h, body_vec)
-        });
+        let continuation_fut = middleware_stack.resolve(request);
 
-        Box::new(request_fut.map_err(|e| ServerError::from(e)).and_then(move |mut request| {
-            rayon::spawn(move || {
-                let req_iat = Instant::now();
-                let mut response = ResponseBuilder::new();
-
-                if let Continue = middleware_stack.resolve(&mut request, &mut response) {
-                    router.dispatch(&mut request, &mut response);
+        Box::new(continuation_fut.and_then(move |cont| {
+            match cont {
+                Continuation::Stop(req, responder) => {
+                    let r = responder.respond(req);
+                    let resp_fut = r.and_then(|builder| futures::finished(builder.build().unwrap()));
+                    Box::new(resp_fut) as Box<Future<Item=HttpResponse<Body>, Error=()> + Send>
                 }
+                Continuation::Continue(request) => {
+                    let (h, b) = request.take_parts();
 
-                let final_res = response.build().unwrap_or_else(|e| {
-                    let mut res = ResponseBuilder::new();
-                    res.status(StatusCode::from_u16(500).expect("Unable to set status code to 500, this should not happens")).body(e);
-                    res.build().unwrap()
-                });
+                    let request_fut = b.into_hyper_body().concat2().map(move |b| {
+                        let body_vec: Vec<u8> = b.to_vec();
+                        BinaryRequest::from_http_request_parts(h, body_vec)
+                    });
 
-                let resp_status = final_res.status();
+                    Box::new(request_fut.map_err(|e| ServerError::from(e)).and_then(move |mut request| {
+                        rayon::spawn(move || {
+                            let req_iat = Instant::now();
+                            let mut response = ResponseBuilder::new();
 
-                let _ = tx.send(final_res);
+                            router.dispatch(&mut request, &mut response);
 
-                let elapsed = req_iat.elapsed();
+                            let final_res = response.build().unwrap_or_else(|e| {
+                                let mut res = ResponseBuilder::new();
+                                res.status(StatusCode::from_u16(500).expect("Unable to set status code to 500, this should not happens")).body(e);
+                                res.build().unwrap()
+                            });
 
-                use ansi_term::Colour::*;
+                            let resp_status = final_res.status();
 
-                let status_str = resp_status.to_string();
+                            let _ = tx.send(final_res);
 
-                let status = match resp_status.as_u16() {
-                    0...199 => Cyan.paint(status_str),
-                    200...299 => Green.paint(status_str),
-                    400...599 => Red.paint(status_str),
-                    _ => Yellow.paint(status_str),
-                };
+                            let elapsed = req_iat.elapsed();
 
-                info!("{} {} {} - {:.3}ms", request.method(), request.uri().path(), status, (elapsed.as_secs() as f64
-                    + elapsed.subsec_nanos() as f64 * 1e-9) * 1000 as f64);
-            });
+                            use ansi_term::Colour::*;
 
-            let timeout = if request_timeout > 0 {
-                Box::new(tokio::timer::Timeout::new(futures::empty::<HttpResponse<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
-                    let mut resp = HttpResponse::new(Body::empty());
-                    *resp.status_mut() = StatusCode::REQUEST_TIMEOUT;
-                    futures::future::ok::<HttpResponse<Body>, ServerError>(resp)
-                })) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
-            } else {
-                Box::new(futures::empty::<HttpResponse<Body>, ServerError>()) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
-            };
+                            let status_str = resp_status.to_string();
 
-            rx.map_err(|e| ServerError::from(e))
-                .select(timeout)
-                .map(|(r, _)| r)
-                .map_err(|(e, _)| e)
-        }))
+                            let status = match resp_status.as_u16() {
+                                0...199 => Cyan.paint(status_str),
+                                200...299 => Green.paint(status_str),
+                                400...599 => Red.paint(status_str),
+                                _ => Yellow.paint(status_str),
+                            };
+
+                            info!("{} {} {} - {:.3}ms", request.method(), request.uri().path(), status, (elapsed.as_secs() as f64
+                                + elapsed.subsec_nanos() as f64 * 1e-9) * 1000 as f64);
+                        });
+
+                        let timeout = if request_timeout > 0 {
+                            Box::new(tokio::timer::Timeout::new(futures::empty::<HttpResponse<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
+                                let mut resp = HttpResponse::new(Body::empty());
+                                *resp.status_mut() = StatusCode::REQUEST_TIMEOUT;
+                                futures::future::ok::<HttpResponse<Body>, ServerError>(resp)
+                            })) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
+                        } else {
+                            Box::new(futures::empty::<HttpResponse<Body>, ServerError>()) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
+                        };
+
+                        rx.map_err(|e| ServerError::from(e))
+                            .select(timeout)
+                            .map(|(r, _)| r)
+                            .map_err(|(e, _)| e)
+                    }).map_err(|_e| ())) as Box<Future<Item=HttpResponse<Body>, Error=()> + Send>
+                }
+            }
+        }).map_err(|_| ServerError::UnsupportedUriScheme)) as Box<Future<Item=HttpResponse<Body>, Error=ServerError> + Send>
     }
 }
 

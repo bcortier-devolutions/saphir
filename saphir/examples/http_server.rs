@@ -7,7 +7,7 @@ struct TestMiddleware {}
 struct QueryParams(Vec<(String, String)>);
 
 impl Middleware for TestMiddleware {
-    fn resolve(&self, req: &mut Request<Vec<u8>>, _res: &mut ResponseBuilder) -> RequestContinuation {
+    fn resolve(&self, req: &mut BinaryRequest, _res: &mut ResponseBuilder) -> RequestContinuation {
         println!("I'm a middleware");
         println!("{:?}", req);
 
@@ -34,7 +34,7 @@ impl TestControllerContext {
         }
     }
 
-    pub fn function_to_receive_any_get_http_call(&self, _req: &Request<Vec<u8>>, res: &mut ResponseBuilder) {
+    pub fn function_to_receive_any_get_http_call(&self, _req: &BinaryRequest, res: &mut ResponseBuilder) {
         res.status(StatusCode::OK).body(format!("this is working nicely!\r\n the context string is : {}", self.resource));
     }
 }

@@ -28,6 +28,7 @@ pub mod request;
 /// Module for the Response
 pub mod response;
 
+pub use hyper::Body;
 pub use http::{uri, header, StatusCode, Version, Method, Extensions};
 pub use crate::utils::*;
 pub use crate::request::*;

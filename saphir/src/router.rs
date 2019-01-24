@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use regex::Regex;
 
-use crate::{Request, ResponseBuilder, StatusCode};
+use crate::{BinaryRequest, ResponseBuilder, StatusCode};
 use crate::controller::Controller;
 use crate::utils::ToRegex;
 
@@ -87,7 +87,7 @@ impl Router {
     }
 
     ///
-    pub fn dispatch(&self, req: &mut Request<Vec<u8>>, res: &mut ResponseBuilder) {
+    pub fn dispatch(&self, req: &mut BinaryRequest, res: &mut ResponseBuilder) {
         let h: Option<(usize, &(Regex, Box<Controller>))> = self.routes.iter().enumerate().find(
             |&(_, &(ref re, _))| {
                 req.current_path_match(re)
