@@ -1,27 +1,36 @@
 extern crate saphir;
 
 use saphir::*;
-
-struct TestMiddleware {}
+use futures::Future;
+use saphir::middleware::Continuation;
 
 struct QueryParams(Vec<(String, String)>);
 
-impl Middleware for TestMiddleware {
-    fn resolve(&self, req: &mut BinaryRequest, _res: &mut ResponseBuilder) -> RequestContinuation {
-        println!("I'm a middleware");
-        println!("{:?}", req);
+fn query_param_middleware(mut request: Request) -> impl 'static + Send + Future<Item=Continuation, Error=()> {
+    println!("I'm a middleware");
+    println!("{:?}", request);
 
-        let params = if let Some(_query_param_str) = req.uri().query() {
-            vec![("param1".to_string(), "value1".to_string()), ("param2".to_string(), "value2".to_string())]
-        } else {
-            vec![]
-        };
+    let params = if let Some(_query_param_str) = request.uri().query() {
+        vec![("param1".to_string(), "value1".to_string()), ("param2".to_string(), "value2".to_string())]
+    } else {
+        vec![]
+    };
 
-        req.extensions_mut().insert(QueryParams(params));
+    request.extensions_mut().insert(QueryParams(params));
 
-        RequestContinuation::Continue
+    futures::finished(Continuation::Continue(request))
+}
+
+fn an_other_middleware(request: Request) -> impl 'static + Send + Future<Item=Continuation, Error=()> {
+    if request.uri().path().contains("potato") {
+        println!("Meh");
+        futures::finished(Continuation::Stop(request, 406.into_boxed()))
+    } else {
+        println!("good");
+        futures::finished(Continuation::Continue(request))
     }
 }
+
 
 struct TestControllerContext {
     pub resource: String,
@@ -44,7 +53,8 @@ fn main() {
 
     let server = server_builder
         .configure_middlewares(|stack| {
-            stack.apply(TestMiddleware {}, vec!("/"), None)
+            stack.apply(query_param_middleware, vec!("/"), None)
+                .apply(an_other_middleware, vec!("/"), None)
         })
         .configure_router(|router| {
             let basic_test_cont = BasicController::new("^/test", TestControllerContext::new("this is a private resource"));

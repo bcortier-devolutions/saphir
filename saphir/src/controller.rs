@@ -246,4 +246,3 @@ impl RequestGuard for BodyGuard {
         RequestContinuation::Continue
     }
 }
-

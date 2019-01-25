@@ -6,7 +6,7 @@ use hyper::service::service_fn;
 use log::{info, error, warn};
 use tokio::runtime::TaskExecutor;
 use crate::error::ServerError;
-use crate::middleware::{MiddlewareCollection, MiddlewareCollectionBuilder as MidStackBuilder};
+use crate::middleware::{MiddlewareStack, Builder as MidStackBuilder};
 use crate::router::{Router, Builder as RouterBuilder};
 use crate::uri::Uri;
 use crate::{BinaryRequest, ResponseBuilder};
@@ -141,7 +141,7 @@ impl ServerSpawn {
 
 /// Builder for the Server type
 pub struct Builder {
-    middleware_stack: Option<MiddlewareCollection>,
+    middleware_stack: Option<MiddlewareStack>,
     router: Option<Router>,
     listener_config: Option<ListenerConfig>,
 }
@@ -190,7 +190,7 @@ impl Builder {
         Server {
             service: HttpService {
                 router: router.unwrap_or_else(|| Router::new()),
-                middleware_stack: middleware_stack.unwrap_or_else(|| MiddlewareCollection::new()),
+                middleware_stack: middleware_stack.unwrap_or_else(|| MiddlewareStack::new()),
                 request_timeout: listener_config.request_timeout_ms
             },
             listener_config
@@ -371,7 +371,7 @@ impl Server {
 #[derive(Clone)]
 pub struct HttpService {
     router: Router,
-    middleware_stack: MiddlewareCollection,
+    middleware_stack: MiddlewareStack,
     request_timeout: u64,
 }
 
@@ -397,7 +397,7 @@ impl HttpService {
 
         Box::new(continuation_fut.and_then(move |cont| {
             match cont {
-                Continuation::Stop(req, responder) => {
+                Continuation::Stop(req, mut responder) => {
                     let r = responder.respond(req);
                     let resp_fut = r.and_then(|builder| futures::finished(builder.build().unwrap()));
                     Box::new(resp_fut) as Box<Future<Item=HttpResponse<Body>, Error=()> + Send>
