@@ -37,6 +37,7 @@ pub use crate::utils::RequestContinuation;
 pub use crate::middleware::Continuation;
 pub use crate::middleware::MiddlewareStack;
 pub use crate::middleware::Resolver;
+pub use crate::middleware::{stop, next};
 pub use crate::controller::Controller;
 pub use crate::controller::BasicController;
 pub use crate::controller::ControllerDispatch;

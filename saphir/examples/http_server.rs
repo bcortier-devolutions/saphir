@@ -18,16 +18,16 @@ fn query_param_middleware(mut request: Request) -> impl 'static + Send + Future<
 
     request.extensions_mut().insert(QueryParams(params));
 
-    futures::finished(Continuation::Continue(request))
+    futures::finished(next(request))
 }
 
 fn an_other_middleware(request: Request) -> impl 'static + Send + Future<Item=Continuation, Error=()> {
     if request.uri().path().contains("potato") {
         println!("Meh");
-        futures::finished(Continuation::Stop(request, 406.into_boxed()))
+        futures::finished(stop(request, 406))
     } else {
         println!("good");
-        futures::finished(Continuation::Continue(request))
+        futures::finished(next(request))
     }
 }
 

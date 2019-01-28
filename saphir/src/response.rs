@@ -114,24 +114,38 @@ impl From<ResponseBuilderFuture> for ResponseFuture {
     }
 }
 
+#[doc(hidden)]
+pub trait AsyncOptionResponder {
+    #[doc(hidden)]
+    fn move_respond(&mut self, request: Request) -> ResponseBuilderFuture;
+    #[doc(hidden)]
+    fn move_respond_with_builder(&mut self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture;
+}
+
+impl<T: AsyncResponder> AsyncOptionResponder for Option<T> {
+    fn move_respond(&mut self, request: Request) -> ResponseBuilderFuture {
+        self.take().expect("Cannot use responder twice").respond(request)
+    }
+
+    fn move_respond_with_builder(&mut self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture {
+        self.take().expect("Cannot use responder twice").respond_with_builder(request, builder)
+    }
+}
+
 ///
 pub trait AsyncResponder {
     ///
-    fn into_boxed(self) -> Box<AsyncResponder + Send + Sync> where Self: 'static + Send + Sync + Sized {
-        Box::new(self)
-    }
+    fn respond(self, request: Request) -> ResponseBuilderFuture;
     ///
-    fn respond(&mut self, request: Request) -> ResponseBuilderFuture;
-    ///
-    fn respond_with_builder(&mut self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture;
+    fn respond_with_builder(self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture;
 }
 
 impl<T: 'static + Send + Sync + Responder> AsyncResponder for T {
-    fn respond(&mut self, request: Request) -> ResponseBuilderFuture {
+    fn respond(self, request: Request) -> ResponseBuilderFuture {
         ResponseBuilderFuture(Box::new(futures::finished(self.respond(request))))
     }
 
-    fn respond_with_builder(&mut self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture {
+    fn respond_with_builder(self, request: Request, builder: ResponseBuilder) -> ResponseBuilderFuture {
         ResponseBuilderFuture(Box::new(futures::finished(self.respond_with_builder(request, builder))))
     }
 }
@@ -139,23 +153,23 @@ impl<T: 'static + Send + Sync + Responder> AsyncResponder for T {
 ///
 pub trait Responder {
     ///
-    fn respond(&mut self, request: Request) -> ResponseBuilder;
+    fn respond(self, request: Request) -> ResponseBuilder;
     ///
-    fn respond_with_builder(&mut self, request: Request, builder: ResponseBuilder) -> ResponseBuilder;
+    fn respond_with_builder(self, request: Request, builder: ResponseBuilder) -> ResponseBuilder;
 }
 
 macro_rules! int_status_responder {
     ( $( $typ:ty ),+ ) => {
         $(
         impl Responder for $typ {
-            fn respond(&mut self, _: Request) -> ResponseBuilder {
+            fn respond(self, _: Request) -> ResponseBuilder {
                 let mut b = ResponseBuilder::new();
-                b.status(*self as u16);
+                b.status(self as u16);
                 b
             }
 
-            fn respond_with_builder(&mut self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
-                builder.status(*self as u16);
+            fn respond_with_builder(self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
+                builder.status(self as u16);
                 builder
             }
         }
@@ -168,30 +182,28 @@ macro_rules! int_status_responder {
 int_status_responder!(u16,i16,u32,i32,u64,i64,usize,isize);
 
 impl Responder for StatusCode {
-    fn respond(&mut self, _: Request) -> ResponseBuilder {
+    fn respond(self, _: Request) -> ResponseBuilder {
         let mut b = ResponseBuilder::new();
-        b.status(self.clone());
+        b.status(self);
         b
     }
 
-    fn respond_with_builder(&mut self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
-        builder.status(self.clone());
+    fn respond_with_builder(self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
+        builder.status(self);
         builder
     }
 }
 
 /// BODY RSPONDER IMPLEMENTATION
 impl Responder for String {
-    fn respond(&mut self, _: Request) -> ResponseBuilder {
+    fn respond(self, _: Request) -> ResponseBuilder {
         let mut b = ResponseBuilder::new();
-        let body: String = self.drain(..).collect();
-        b.body(body);
+        b.body(self);
         b
     }
 
-    fn respond_with_builder(&mut self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
-        let body: String = self.drain(..).collect();
-        builder.body(body);
+    fn respond_with_builder(self, _: Request, mut builder: ResponseBuilder) -> ResponseBuilder {
+        builder.body(self);
         builder
     }
 }

@@ -398,11 +398,11 @@ impl HttpService {
         Box::new(continuation_fut.and_then(move |cont| {
             match cont {
                 Continuation::Stop(req, mut responder) => {
-                    let r = responder.respond(req);
+                    let r = responder.move_respond(req);
                     let resp_fut = r.and_then(|builder| futures::finished(builder.build().unwrap()));
                     Box::new(resp_fut) as Box<Future<Item=HttpResponse<Body>, Error=()> + Send>
                 }
-                Continuation::Continue(request) => {
+                Continuation::Next(request) => {
                     let (h, b) = request.take_parts();
 
                     let request_fut = b.into_hyper_body().concat2().map(move |b| {

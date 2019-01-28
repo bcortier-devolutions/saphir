@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::utils::ToRegex;
 use tokio::prelude::*;
 use crate::request::Request;
+use crate::response::AsyncOptionResponder;
 use crate::response::AsyncResponder;
 
 struct MiddlewareRule {
@@ -96,7 +97,7 @@ impl Future for ResolvedStackFuture {
     fn poll(&mut self) -> Result<Async<Self::Item>, Self::Error> {
         if let Some(fut) = self.current.as_mut().take() {
             match fut.poll()? {
-                Async::Ready(Continuation::Continue(request)) => {
+                Async::Ready(Continuation::Next(request)) => {
                     self.request = Some(request);
                 }
                 Async::Ready(Continuation::Stop(req, responder)) => {
@@ -111,7 +112,7 @@ impl Future for ResolvedStackFuture {
 
         loop {
             if self.next >= self.middlewares.len() {
-                return Ok(Async::Ready(Continuation::Continue(self.request.take().expect("A MiddlewaresResolverFuture without request should not exist, this is fatal"))));
+                return Ok(Async::Ready(Continuation::Next(self.request.take().expect("A MiddlewaresResolverFuture without request should not exist, this is fatal"))));
             }
 
             let next = &self.middlewares[self.next];
@@ -168,9 +169,19 @@ impl Builder {
 ///
 pub enum Continuation {
     ///
-    Stop(Request, Box<AsyncResponder + Send + Sync>),
+    Stop(Request, Box<AsyncOptionResponder + Send + Sync>),
     ///
-    Continue(Request),
+    Next(Request),
+}
+
+///
+pub fn stop<R: 'static + AsyncResponder + Send + Sync>(request: Request, responder: R) -> Continuation {
+    Continuation::Stop(request, Box::new(Some(responder)))
+}
+
+///
+pub fn next(request: Request) -> Continuation {
+    Continuation::Next(request)
 }
 
 ///
