@@ -4,13 +4,13 @@ use hyper::service::service_fn;
 use log::{info, error, warn};
 use tokio::runtime::TaskExecutor;
 
-use crate::http::*;
-use crate::utils;
+use crate::{utils, SyncResponse, StatusCode, Uri};
 use crate::error::ServerError;
 use crate::middleware::{MiddlewareStack, Builder as MidStackBuilder};
 use crate::router::{Router, Builder as RouterBuilder};
 use threadpool::ThreadPool;
 use tokio::prelude::stream::Stream;
+use hyper::Body;
 
 ///
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 15000;
@@ -240,7 +240,7 @@ impl Server {
             handler: service.clone(),
         };
 
-        if scheme.eq(&crate::http_types::uri::Scheme::HTTP) {
+        if scheme.eq(&http::uri::Scheme::HTTP) {
             if let (Some(_), _) = self.listener_config.ssl_files_path() {
                 warn!("SSL certificate paths are provided but the listener was configured to use unsecured HTTP, try changing the uri scheme for https");
             }
@@ -254,7 +254,7 @@ impl Server {
 
             executor.spawn(server);
             info!("Saphir successfully started and listening on {}", uri);
-        } else if scheme.eq(&crate::http_types::uri::Scheme::HTTPS) {
+        } else if scheme.eq(&http::uri::Scheme::HTTPS) {
             #[cfg(feature = "https")]
                 {
                     if let (Some(cert_path), Some(key_path)) = self.listener_config.ssl_files_path() {
@@ -336,22 +336,20 @@ pub struct HttpService {
 
 #[doc(hidden)]
 impl HttpService {
-    pub fn handle(&self, req: Request<Body>) -> Box<Future<Item=Response<Body>, Error=ServerError> + Send> {
+    pub fn handle(&self, req: hyper::Request<Body>) -> Box<Future<Item=hyper::Response<Body>, Error=ServerError> + Send> {
         use std::time::{Instant, Duration};
         use crate::server::utils::RequestContinuation::*;
-        use futures::sync::oneshot::channel;
-
-        let (tx, rx) = channel();
+        use crate::request::LoadBody;
 
         let HttpService {
             router,
             middleware_stack,
             request_timeout,
-            thread_pool,
+            thread_pool: _,
         } = self.clone();
 
         Box::new(req.load_body().map_err(|e| ServerError::from(e)).and_then(move |mut request| {
-            thread_pool.execute(move || {
+            let fut = futures::future::lazy(move || {
                 let req_iat = Instant::now();
                 let mut response = SyncResponse::new();
 
@@ -361,14 +359,12 @@ impl HttpService {
 
                 let final_res = response.build_response().unwrap_or_else(|_| {
                     let empty: &[u8] = b"";
-                    let mut res = Response::new(empty.into());
+                    let mut res = hyper::Response::new(empty.into());
                     *res.status_mut() = StatusCode::from_u16(500).expect("Unable to set status code to 500, this should not happens");
                     res
                 });
 
                 let resp_status = final_res.status();
-
-                let _ = tx.send(final_res);
 
                 let elapsed = req_iat.elapsed();
 
@@ -385,20 +381,23 @@ impl HttpService {
 
                 info!("{} {} {} - {:.3}ms", request.method(), request.uri().path(), status, (elapsed.as_secs() as f64
                     + elapsed.subsec_nanos() as f64 * 1e-9) * 1000 as f64);
+
+                let result: Result<hyper::Response<Body>, ServerError> = Ok(final_res);
+
+                result
             });
 
             let timeout = if request_timeout > 0 {
-                Box::new(tokio::timer::Timeout::new(futures::empty::<Response<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
-                    let mut resp = Response::new(Body::empty());
+                Box::new(tokio::timer::Timeout::new(futures::empty::<hyper::Response<Body>, ServerError>(), Duration::from_millis(request_timeout)).then(|_| {
+                    let mut resp = hyper::Response::new(Body::empty());
                     *resp.status_mut() = StatusCode::REQUEST_TIMEOUT;
-                    futures::future::ok::<Response<Body>, ServerError>(resp)
-                })) as Box<Future<Item=Response<Body>, Error=ServerError> + Send>
+                    futures::future::ok::<hyper::Response<Body>, ServerError>(resp)
+                })) as Box<Future<Item=hyper::Response<Body>, Error=ServerError> + Send>
             } else {
-                Box::new(futures::empty::<Response<Body>, ServerError>()) as Box<Future<Item=Response<Body>, Error=ServerError> + Send>
+                Box::new(futures::empty::<hyper::Response<Body>, ServerError>()) as Box<Future<Item=hyper::Response<Body>, Error=ServerError> + Send>
             };
 
-            rx.map_err(|e| ServerError::from(e))
-                .select(timeout)
+            fut.select(timeout)
                 .map(|(r, _)| r)
                 .map_err(|(e, _)| e)
         }))

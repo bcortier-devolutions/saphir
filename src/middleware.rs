@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use log::error;
-use crate::http::*;
 use crate::utils::{RequestContinuation, UriPathMatcher};
 use crate::utils::RequestContinuation::*;
+use crate::{SyncRequest, SyncResponse};
 
 ///
 pub struct Builder {

@@ -10,7 +10,7 @@ pub enum ServerError {
     /// A parsing error of addr
     ParseError(::std::net::AddrParseError),
     /// An invalid URI
-    InvalidUri(crate::http_types::uri::InvalidUri),
+    InvalidUri(http::uri::InvalidUri),
     /// Unsupported URI Scheme
     UnsupportedUriScheme,
     /// IO error
@@ -37,8 +37,8 @@ impl From<::futures::Canceled> for ServerError {
     }
 }
 
-impl From<crate::http_types::uri::InvalidUri> for ServerError {
-    fn from(e: crate::http_types::uri::InvalidUri) -> Self {
+impl From<http::uri::InvalidUri> for ServerError {
+    fn from(e: http::uri::InvalidUri) -> Self {
         ServerError::InvalidUri(e)
     }
 }

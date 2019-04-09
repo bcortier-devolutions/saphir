@@ -13,25 +13,37 @@
 
 #[macro_use]
 mod utils;
-mod http;
 /// Modules for the error handling into saphir
 pub mod error;
 /// Modules for the middlewares
 pub mod middleware;
 /// Modules for the controllers
 pub mod controller;
+/// Modules for responses
+pub mod response;
+/// Modules for request
+pub mod request;
 /// Modules for the router
 pub mod router;
 /// Modules for the http server
 pub mod server;
 
-use ::http as http_types;
 pub use regex;
 pub use hyper;
 
+///
+pub mod header {
+    pub use http::header::*;
+}
+
+pub use http::StatusCode;
+pub use http::Version;
+pub use http::Method;
+pub use http::Uri;
+pub use crate::header::*;
 pub use crate::utils::*;
-pub use crate::http::*;
-pub use crate::utils::RequestContinuation;
+pub use crate::request::*;
+pub use crate::response::*;
 pub use crate::middleware::Middleware;
 pub use crate::middleware::MiddlewareStack;
 pub use crate::controller::Controller;

@@ -1,8 +1,9 @@
 use parking_lot::RwLock;
 
-use crate::http::*;
 use crate::utils::UriPathMatcher;
 use crate::utils::RequestContinuation;
+use ::std::slice::Iter;
+use crate::{SyncRequest, SyncResponse, Method, StatusCode};
 
 /// Trait representing a controller
 pub trait Controller: Send + Sync {
@@ -75,8 +76,6 @@ impl From<Vec<Box<RequestGuard>>> for RequestGuardCollection {
         reqg
     }
 }
-
-use ::std::slice::Iter;
 
 impl<'a> IntoIterator for &'a RequestGuardCollection {
     type Item = &'a Box<RequestGuard>;

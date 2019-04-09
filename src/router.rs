@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::controller::Controller;
-use crate::http::*;
 use crate::utils::UriPathMatcher;
+use crate::{SyncRequest, SyncResponse, StatusCode};
 
 ///
 pub struct Builder {
