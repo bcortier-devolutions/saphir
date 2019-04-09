@@ -339,17 +339,20 @@ impl HttpService {
     pub fn handle(&self, req: hyper::Request<Body>) -> Box<Future<Item=hyper::Response<Body>, Error=ServerError> + Send> {
         use std::time::{Instant, Duration};
         use crate::server::utils::RequestContinuation::*;
+        use futures::sync::oneshot::channel;
         use crate::request::LoadBody;
+
+        let (tx, rx) = channel();
 
         let HttpService {
             router,
             middleware_stack,
             request_timeout,
-            thread_pool: _,
+            thread_pool,
         } = self.clone();
 
         Box::new(req.load_body().map_err(|e| ServerError::from(e)).and_then(move |mut request| {
-            let fut = futures::future::lazy(move || {
+            thread_pool.execute(move || {
                 let req_iat = Instant::now();
                 let mut response = SyncResponse::new();
 
@@ -364,7 +367,10 @@ impl HttpService {
                     res
                 });
 
+
                 let resp_status = final_res.status();
+
+                let _ = tx.send(final_res);
 
                 let elapsed = req_iat.elapsed();
 
@@ -381,10 +387,6 @@ impl HttpService {
 
                 info!("{} {} {} - {:.3}ms", request.method(), request.uri().path(), status, (elapsed.as_secs() as f64
                     + elapsed.subsec_nanos() as f64 * 1e-9) * 1000 as f64);
-
-                let result: Result<hyper::Response<Body>, ServerError> = Ok(final_res);
-
-                result
             });
 
             let timeout = if request_timeout > 0 {
@@ -397,7 +399,7 @@ impl HttpService {
                 Box::new(futures::empty::<hyper::Response<Body>, ServerError>()) as Box<Future<Item=hyper::Response<Body>, Error=ServerError> + Send>
             };
 
-            fut.select(timeout)
+            rx.map_err(|e| ServerError::from(e)).select(timeout)
                 .map(|(r, _)| r)
                 .map_err(|(e, _)| e)
         }))
